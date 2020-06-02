@@ -1,0 +1,5 @@
+#!/bin/bash
+
+COORDINATOR="http://localhost:2000"
+
+curl -H "Content-Type: application/json" --data "@$1" "$COORDINATOR/transact"
