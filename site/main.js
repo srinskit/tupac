@@ -3,7 +3,7 @@ const { createLogger, format, transports } = require('winston');
 const logger = createLogger({
 	level: 'debug',
 	format: format.combine(
-		format.timestamp({ format: 'YYYY-MM-DD hh:mm:ss' }),
+		format.timestamp({ format: 'hh:mm:ss' }),
 		format.cli(),
 		format.printf(info => `${info.timestamp} ${info.level}:${info.message}`)
 	),
@@ -32,16 +32,16 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 app.post('/transact/:tid', (req, res) => {
-	setTimeout(() => res.send("DONE"), randInt(5000));
+	setTimeout(() => res.send("DONE"), randInt(1000));
 });
 app.get('/query_to_commit/:tid', (req, res) => {
-	setTimeout(() => res.send("READY"), randInt(5000));
+	setTimeout(() => res.send("READY"), randInt(2500));
 });
 app.post('/commit/:tid', (req, res) => {
-	setTimeout(() => res.send("ACK"), randInt(5000));
+	setTimeout(() => res.send("ACK"), randInt(1000));
 });
 app.post('/rollback/:tid', (req, res) => {
-	setTimeout(() => res.send("ACK"), randInt(5000));
+	setTimeout(() => res.send("ACK"), randInt(1000));
 });
 
 const server = require('http').createServer(app);

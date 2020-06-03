@@ -3,7 +3,7 @@ const { createLogger, format, transports } = require('winston');
 const logger = createLogger({
 	level: 'debug',
 	format: format.combine(
-		format.timestamp({ format: 'YYYY-MM-DD hh:mm:ss' }),
+		format.timestamp({ format: 'hh:mm:ss' }),
 		format.cli(),
 		format.printf(info => `${info.timestamp} ${info.level}:${info.message}`)
 	),
@@ -11,6 +11,7 @@ const logger = createLogger({
 });
 
 const FAILURE = 0, SUCCESS = 1, TIMEOUT = -1;
+const TIMOUT_TIME = 2000;
 const sites = ['site1', 'site2', 'site3', 'site4'];
 const timers = {};
 const client_res = {};
@@ -23,26 +24,30 @@ function transact(tid, transactionData) {
 	done_remaining[tid] = sites.length;
 	sites.forEach(site => {
 		logger.info(`Sending transaction to ${site}`);
-		fetch(`${getUrlOfPeer(site)}/transact/${tid}`, {
+		timeout(fetch(`${getUrlOfPeer(site)}/transact/${tid}`, {
 			method: 'POST',
 			body: transactionData
-		})
-			.then(r => handleTransactResult(r.ok ? SUCCESS : FAILURE, tid, site))
-			.catch(_ => handleTransactResult(FAILURE, tid, site));
+		}), TIMOUT_TIME)
+			.then(({ ok }) => handleTransactResult(resultify(ok), tid, site))
+			.catch(({ message }) => handleTransactResult(resultify(message), tid, site));
 	});
 }
 
 function handleTransactResult(result, tid, site) {
+	if (!done_remaining[tid]) return;
+
 	if (result === SUCCESS) {
-		logger.info(`Received DONE from ${site} for ${tid}`);
 		done_remaining[tid]--;
+		logger.info(`${site} DONE processing ${tid}`);
 		if (done_remaining[tid] === 0) {
 			logger.info(`All sites DONE processing ${tid}`);
 			process.nextTick(() => queryToCommit(tid))
 		}
-	} else if (result === FAILURE) {
-		logger.error(`Received ERROR from ${site} for ${tid}`);
-	} else if (result === TIMEOUT) {
+	} else {
+		done_remaining[tid] = 0;
+		const msg = `${site} failed to process ${tid}${result === TIMEOUT ? ', timed-out' : ''}`
+		logger.error(msg);
+		handleTransactionComplete(tid, result, msg);
 	}
 }
 
@@ -50,25 +55,28 @@ function queryToCommit(tid) {
 	ready_remaining[tid] = sites.length;
 	sites.forEach(site => {
 		logger.info(`Asking ${site} if READY to commit ${tid}`);
-		fetch(`${getUrlOfPeer(site)}/query_to_commit/${tid}`)
-			.then(r => handleQueryToCommitResult(r.ok ? SUCCESS : FAILURE, tid, site))
-			.catch(_ => handleQueryToCommitResult(FAILURE, tid, site));
+		timeout(fetch(`${getUrlOfPeer(site)}/query_to_commit/${tid}`), TIMOUT_TIME)
+			.then(({ ok }) => handleQueryToCommitResult(resultify(ok), tid, site))
+			.catch(({ message }) => handleQueryToCommitResult(resultify(message), tid, site));
 	});
 }
 
 function handleQueryToCommitResult(result, tid, site) {
+	if (!ready_remaining[tid]) return;
+
 	if (result === SUCCESS) {
-		logger.info(`Received READY from ${site} for ${tid}`);
 		ready_remaining[tid]--;
+		logger.info(`${site} READY to commit ${tid}`);
 		if (ready_remaining[tid] === 0) {
 			logger.info(`All sites READY to commit ${tid}`);
 			process.nextTick(() => askToCommit(tid));
 		}
 	}
-	else if (result === FAILURE) {
-		logger.error(`Received NOT READY from ${site} for ${tid}`);
-	}
-	else if (result === TIMEOUT) {
+	else {
+		ready_remaining[tid] = 0;
+		const msg = `${site} NOT READY to commit ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
+		logger.error(msg);
+		process.nextTick(() => askToRollback(tid));
 	}
 }
 
@@ -76,25 +84,28 @@ function askToCommit(tid) {
 	commit_ack_remaining[tid] = sites.length;
 	sites.forEach(site => {
 		logger.info(`Asking ${site} to commit ${tid}`);
-		fetch(`${getUrlOfPeer(site)}/commit/${tid}`, { method: 'POST' })
-			.then(r => handleCommitResult(r.ok ? SUCCESS : FAILURE, tid, site))
-			.catch(e => handleCommitResult(FAILURE, tid, site));
+		timeout(fetch(`${getUrlOfPeer(site)}/commit/${tid}`, { method: 'POST' }), TIMOUT_TIME)
+			.then(({ ok }) => handleCommitResult(resultify(ok), tid, site))
+			.catch(({ message }) => handleCommitResult(resultify(message), tid, site));
 	});
 }
 
 function handleCommitResult(result, tid, site) {
+	if (!commit_ack_remaining[tid]) return;
+
 	if (result === SUCCESS) {
-		logger.info(`Received COMMIT ACK from ${site} for ${tid}`);
 		commit_ack_remaining[tid]--;
+		logger.info(`${site} COMMITED ${tid}`);
 		if (commit_ack_remaining[tid] === 0) {
 			logger.info(`All sites COMMITED ${tid}`);
-			const res = client_res[tid];
-			res.end("DONE\n");
+			process.nextTick(() => handleTransactionComplete(tid, SUCCESS))
 		}
 	}
-	else if (result === FAILURE) {
-	}
-	else if (result === TIMEOUT) {
+	else {
+		commit_ack_remaining[tid] = 0;
+		const msg = `${site} failed to COMMIT ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
+		logger.error(msg);
+		handleTransactionComplete(tid, result, msg);
 	}
 }
 
@@ -102,18 +113,38 @@ function askToRollback(tid) {
 	rollback_ack_remaining[tid] = sites.length;
 	sites.forEach(site => {
 		logger.info(`Asking ${site} to rollback ${tid}`);
-		fetch(`${getUrlOfPeer(site)}/rollback/${tid}`, { method: 'POST' })
-			.then(r => handleRollbackResult(r.ok ? SUCCESS : FAILURE, tid, site))
-			.catch(e => handleRollbackResult(FAILURE, tid, site));
+		timeout(fetch(`${getUrlOfPeer(site)}/rollback/${tid}`, { method: 'POST' }), TIMOUT_TIME)
+			.then(({ ok }) => handleRollbackResult(resultify(ok), tid, site))
+			.catch(({ message }) => handleRollbackResult(resultify(message), tid, site));
 	});
 }
 
 function handleRollbackResult(result, tid, site) {
+	if (!rollback_ack_remaining[tid]) return;
+
 	if (result === SUCCESS) {
+		rollback_ack_remaining[tid]--;
+		logger.info(`${site} ROLLEDBACK ${tid}`);
+		if (rollback_ack_remaining[tid] === 0) {
+			logger.info(`All sites ROLLEDBACK ${tid}`);
+			handleTransactionComplete(tid, FAILURE, 'atleast one site NOT READY');
+		}
 	}
-	else if (result === FAILURE) {
+	else {
+		rollback_ack_remaining[tid] = 0;
+		const msg = `${site} failed to ROLLBACK ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
+		logger.error(msg);
+		handleTransactionComplete(tid, result, msg);
 	}
-	else if (result === TIMEOUT) {
+}
+
+function handleTransactionComplete(tid, result, reason) {
+	const res = client_res[tid];
+	if (result === SUCCESS) {
+		res.end("SUCCESS\n");
+	}
+	else {
+		res.end(`FAILED: ${reason}\n`);
 	}
 }
 
@@ -175,4 +206,30 @@ function getPortOfPeer(name) {
 
 function getUrlOfPeer(name) {
 	return `http://localhost:${getPortOfPeer(name)}`
+}
+
+function timeout(promise, ms) {
+	return new Promise((resolve, reject) => {
+		const timeoutId = setTimeout(() => {
+			reject(new Error("timeout"))
+		}, ms);
+		promise.then(
+			(res) => {
+				clearTimeout(timeoutId);
+				resolve(res);
+			},
+			(err) => {
+				clearTimeout(timeoutId);
+				reject(err);
+			}
+		);
+	})
+}
+
+function resultify(result) {
+	switch (result) {
+		case true: return SUCCESS;
+		case 'timeout': return TIMEOUT;
+		default: return FAILURE;
+	}
 }
