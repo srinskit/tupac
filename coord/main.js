@@ -11,7 +11,7 @@ const logger = createLogger({
 });
 
 const FAILURE = 0, SUCCESS = 1, TIMEOUT = -1;
-const TIMOUT_TIME = 2000;
+const TIMOUT_TIME = 5000;
 const sites = ['site1', 'site2', 'site3', 'site4'];
 const timers = {};
 const client_res = {};
