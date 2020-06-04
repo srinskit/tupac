@@ -26,6 +26,9 @@ function transact(tid, transactionData) {
 		logger.info(`Sending transaction to ${site}`);
 		timeout(fetch(`${getUrlOfPeer(site)}/transact/${tid}`, {
 			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json'
+			},
 			body: transactionData
 		}), TIMOUT_TIME)
 			.then(({ ok }) => handleTransactResult(resultify(ok), tid, site))
