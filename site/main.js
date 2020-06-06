@@ -1,12 +1,9 @@
-const { create, all } = require('mathjs');
-
-const config = { }
-const math = create(all, config)
 const { createLogger, format, transports } = require('winston');
 
 const logger = createLogger({
 	level: 'debug',
 	format: format.combine(
+		format.prettyPrint(),
 		format.timestamp({ format: 'hh:mm:ss' }),
 		format.cli(),
 		format.printf(info => `${info.timestamp} ${info.level}:${info.message}`)
@@ -14,10 +11,61 @@ const logger = createLogger({
 	transports: [new transports.Console()]
 });
 
-const transactionLog = {}
+const { create, all } = require('mathjs');
+const math = create(all, {});
 
-const db = { a: 0, b: 0, c: 0 };
-var midCommit = {};
+const db = {};
+const transactionLog = {};
+const pendingCommits = {};
+
+function saveTransaction(tid, transaction) {
+	transactionLog[tid] = transaction;
+	logger.info("Transaction received");
+	logger.info("Transaction logs: ");
+	console.log(transactionLog);
+	console.log();
+}
+
+function prepareTransaction(tid) {
+	logger.info(`Preparing transaction ${tid}`);
+
+	const { instructions } = transactionLog[tid];
+	const state = clone(db);
+	math.evaluate(instructions, state)
+	pendingCommits[tid] = state;
+
+	logger.info("Pending commits:");
+	console.log(pendingCommits);
+	console.log();
+}
+
+function commitTransaction(tid) {
+	logger.info("DB before commit: " + JSON.stringify(db));
+	logger.info(`Committing transaction ${tid}`);
+
+	commit = pendingCommits[tid];
+	for (let variable in commit) {
+		db[variable] = commit[variable];
+	}
+	delete transactionLog[tid];
+	delete pendingCommits[tid];
+
+	logger.info("DB after commit: " + JSON.stringify(db));
+}
+
+function rollbackTransaction(tid) {
+	logger.info(`Rolling-back transaction ${tid}`);
+
+	delete transactionLog[tid];
+	delete pendingCommits[tid];
+
+	logger.info("Transaction logs:");
+	console.log(transactionLog);
+	console.log();
+	logger.info("Pending commits:");
+	console.log(pendingCommits);
+	console.log();
+}
 
 const port = getPortOfPeer(process.argv[2])
 if (!port) {
@@ -26,90 +74,43 @@ if (!port) {
 }
 
 const express = require('express');
-const morgan = require('morgan');
 const status = require('http-status');
 
 const app = express();
 
 app.set('port', port);
-app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 app.post('/transact/:tid', (req, res) => {
 	setTimeout(() => res.send("DONE"), randInt(1000));
-	saveTransaction(req);
+	saveTransaction(req.params.tid, req.body);
 });
-
-function saveTransaction(req) {
-	transactionLog[req.params.tid] = req.body;
-	console.log("Transaction Received!");
-	console.log(transactionLog);
-
-	performTransaction(req);
-}
-
-function performTransaction(req) {
-	transaction = transactionLog[req.params.tid];
-	tra = transaction.instructions[0];
-	trb = transaction.instructions[1];
-	trc = transaction.instructions[2];
-
-	console.log("Transactions:")
-	parseTransaction(tra);
-	parseTransaction(trb);
-	parseTransaction(trc);
-
-	console.log("Transaction completed locally!");
-}
-
-function parseTransaction(trans) {
-	console.log(trans);
-	math.evaluate(trans, midCommit);
-}
 
 app.get('/query_to_commit/:tid', (req, res) => {
 	setTimeout(() => res.send("READY"), randInt(2500));
+	prepareTransaction(req.params.tid);
 });
+
 app.post('/commit/:tid', (req, res) => {
 	setTimeout(() => res.send("ACK"), randInt(1000));
-	commitTransaction();
+	commitTransaction(req.params.tid);
 });
-
-
-function commitTransaction() {
-	console.log("Object before Commit");
-	console.log(db);
-	console.log("Committing the Transactions!");
-	db.a = midCommit.a;
-	db.b = midCommit.b;
-	db.c = midCommit.c;
-
-	console.log("Object after Commit");
-	console.log(db);
-}
 
 app.post('/rollback/:tid', (req, res) => {
 	setTimeout(() => res.send("ACK"), randInt(1000));
-	noCommit();
+	rollbackTransaction(req.params.tid);
 });
 
-function noCommit(req) {
-	const id = req.params.tid;
-	console.log("Commit Failed ! Aborting the Transaction");
-	delete transactionLog.id;
-	console.log("Transaction Pool:");
-	console.log(transactionLog);
-}
+app.get('/db', (req, res) => {
+	res.json(db);
+});
 
 const server = require('http').createServer(app);
 server.listen(port);
 server.on('listening', function () {
-	const addr = server.address();
-	const bind = typeof addr === 'string'
-		? 'pipe ' + addr
-		: 'port ' + addr.port;
-	logger.info('Listening on ' + bind);
+	const { port } = server.address();
+	logger.info('Started server. Port:' + port);
 });
 
 function getPortOfPeer(name) {
@@ -124,4 +125,8 @@ function getPortOfPeer(name) {
 
 function randInt(max) {
 	return Math.floor(Math.random() * max);
+}
+
+function clone(simpleObj) {
+	return JSON.parse(JSON.stringify(simpleObj));
 }
