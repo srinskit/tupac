@@ -13,7 +13,6 @@ const logger = createLogger({
 const FAILURE = 0, SUCCESS = 1, TIMEOUT = -1;
 const TIMOUT_TIME = 5000;
 const sites = ['site1', 'site2', 'site3', 'site4'];
-const timers = {};
 const client_res = {};
 const done_remaining = {};
 const ready_remaining = {};
@@ -144,10 +143,10 @@ function handleRollbackResult(result, tid, site) {
 function handleTransactionComplete(tid, result, reason) {
 	const res = client_res[tid];
 	if (result === SUCCESS) {
-		res.end("SUCCESS\n");
+		res.end("SUCCESS");
 	}
 	else {
-		res.end(`FAILED: ${reason}\n`);
+		res.end(`FAILED: ${reason}`);
 	}
 }
 
@@ -158,7 +157,6 @@ if (!port) {
 }
 
 const express = require('express');
-const morgan = require('morgan');
 const status = require('http-status');
 const { v1: uuidv1 } = require('uuid');
 const fetch = require('node-fetch');
@@ -166,7 +164,6 @@ const fetch = require('node-fetch');
 const app = express();
 
 app.set('port', port);
-app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -180,12 +177,7 @@ app.post('/transact', (req, res) => {
 	client_res[tid] = res;
 
 	transact(tid, transactionData);
-
-	timers[tid] = setTimeout(() => {
-	}, 5000);
 });
-app.post('/vote/:tid/:action', (req, res) => res.sendStatus(status.OK));
-app.post('/ack/:tid', (req, res) => res.sendStatus(status.OK));
 
 const server = require('http').createServer(app);
 server.listen(port);
