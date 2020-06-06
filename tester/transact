@@ -1,5 +1,14 @@
 #!/bin/bash
 
 COORDINATOR="http://localhost:2000"
+SITE="http://localhost:6000"
 
-curl -H "Content-Type: application/json" --data "@$1" "$COORDINATOR/transact"
+echo -n "DB: "
+curl -w "\n" "$SITE/db"
+echo
+
+curl -w "\n" -H "Content-Type: application/json" --data "@$1" "$COORDINATOR/transact"
+
+echo
+echo -n "DB: "
+curl -w "\n" "$SITE/db"

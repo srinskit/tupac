@@ -1,0 +1,11 @@
+#!/bin/bash
+root="~/Projects/tupac"
+cmd="nodemon"
+
+declare -a sites=("site1" "site2" "site3" "site4")
+
+for site in "${sites[@]}"; do
+	gnome-terminal --title="$site" -- $SHELL -c "cd $root/site; $cmd $site"
+done
+
+gnome-terminal --title="coordinator" -- $SHELL -c "cd $root/coord; $cmd coordinator"
