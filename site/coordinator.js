@@ -1,14 +1,6 @@
-const { createLogger, format, transports } = require('winston');
-
-const logger = createLogger({
-	level: 'debug',
-	format: format.combine(
-		format.timestamp({ format: 'hh:mm:ss' }),
-		format.cli(),
-		format.printf(info => `${info.timestamp} ${info.level}:${info.message}`)
-	),
-	transports: [new transports.Console()]
-});
+const logger = require('./logger');
+const { getUrlOfPeer } = require('./arch');
+const fetch = require('node-fetch');
 
 const FAILURE = 0, SUCCESS = 1, TIMEOUT = -1;
 const TIMOUT_TIME = 5000;
@@ -19,11 +11,12 @@ const ready_remaining = {};
 const commit_ack_remaining = {};
 const rollback_ack_remaining = {};
 
-function transact(tid, transactionData) {
+function transact(tid, transactionData, res) {
+	client_res[tid] = res;
 	done_remaining[tid] = sites.length;
 	sites.forEach(site => {
 		logger.info(`Sending transaction to ${site}`);
-		timeout(fetch(`${getUrlOfPeer(site)}/transact/${tid}`, {
+		timeout(fetch(`${getUrlOfPeer(site)}/save/${tid}`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -43,7 +36,7 @@ function handleTransactResult(result, tid, site) {
 		logger.info(`${site} DONE processing ${tid}`);
 		if (done_remaining[tid] === 0) {
 			logger.info(`All sites DONE processing ${tid}`);
-			process.nextTick(() => queryToCommit(tid))
+			process.nextTick(() => askToPrepare(tid))
 		}
 	} else {
 		done_remaining[tid] = 0;
@@ -53,17 +46,17 @@ function handleTransactResult(result, tid, site) {
 	}
 }
 
-function queryToCommit(tid) {
+function askToPrepare(tid) {
 	ready_remaining[tid] = sites.length;
 	sites.forEach(site => {
 		logger.info(`Asking ${site} if READY to commit ${tid}`);
-		timeout(fetch(`${getUrlOfPeer(site)}/query_to_commit/${tid}`), TIMOUT_TIME)
-			.then(({ ok }) => handleQueryToCommitResult(resultify(ok), tid, site))
-			.catch(({ message }) => handleQueryToCommitResult(resultify(message), tid, site));
+		timeout(fetch(`${getUrlOfPeer(site)}/prepare/${tid}`), TIMOUT_TIME)
+			.then(({ ok }) => handlePrepareResult(resultify(ok), tid, site))
+			.catch(({ message }) => handlePrepareResult(resultify(message), tid, site));
 	});
 }
 
-function handleQueryToCommitResult(result, tid, site) {
+function handlePrepareResult(result, tid, site) {
 	if (!ready_remaining[tid]) return;
 
 	if (result === SUCCESS) {
@@ -150,59 +143,6 @@ function handleTransactionComplete(tid, result, reason) {
 	}
 }
 
-const port = getPortOfPeer(process.argv[2])
-if (!port) {
-	logger.error("Invalid site");
-	process.exit(1);
-}
-
-const express = require('express');
-const status = require('http-status');
-const { v1: uuidv1 } = require('uuid');
-const fetch = require('node-fetch');
-
-const app = express();
-
-app.set('port', port);
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
-
-app.post('/transact', (req, res) => {
-	const transaction = req.body;
-	const transactionData = JSON.stringify(transaction);
-	const tid = uuidv1();
-
-	res.write(`Transaction ID: ${tid}\n`);
-	res.write(`Transaction: ${transactionData}\n`);
-	client_res[tid] = res;
-
-	transact(tid, transactionData);
-});
-
-const server = require('http').createServer(app);
-server.listen(port);
-server.on('listening', function () {
-	const addr = server.address();
-	const bind = typeof addr === 'string'
-		? 'pipe ' + addr
-		: 'port ' + addr.port;
-	logger.info('Listening on ' + bind);
-});
-
-function getPortOfPeer(name) {
-	return {
-		'coordinator': 2000,
-		'site1': 3000,
-		'site2': 4000,
-		'site3': 5000,
-		'site4': 6000
-	}[name];
-}
-
-function getUrlOfPeer(name) {
-	return `http://localhost:${getPortOfPeer(name)}`
-}
-
 function timeout(promise, ms) {
 	return new Promise((resolve, reject) => {
 		const timeoutId = setTimeout(() => {
@@ -228,3 +168,5 @@ function resultify(result) {
 		default: return FAILURE;
 	}
 }
+
+module.exports = { transact };

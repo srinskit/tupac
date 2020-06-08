@@ -9,6 +9,8 @@
 		"express": "~4.16.1",
 		"http-status": "^1.4.2",
 		"mathjs": "^7.0.1",
+		"node-fetch": "^2.6.0",
+		"uuid": "^8.1.0",
 		"winston": "^3.2.1"
 	}
 }
