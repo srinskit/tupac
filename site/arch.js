@@ -11,4 +11,12 @@ function getUrlOfPeer(name) {
 	return `http://localhost:${getPortOfPeer(name)}`;
 }
 
-module.exports = { getUrlOfPeer, getPortOfPeer };
+function getSiteName() {
+	return process.argv[2];
+}
+
+function getMyUrl() {
+	return getUrlOfPeer(getSiteName());
+}
+
+module.exports = { getUrlOfPeer, getPortOfPeer, getSiteName, getMyUrl };

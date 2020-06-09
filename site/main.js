@@ -1,14 +1,14 @@
 const logger = require('./logger');
-const { getPortOfPeer } = require('./arch');
+const { getPortOfPeer, getSiteName } = require('./arch');
 
-const port = getPortOfPeer(process.argv[2])
+const port = getPortOfPeer(getSiteName())
 if (!port) {
 	logger.error("Invalid site");
 	process.exit(1);
 }
 
-const { transact } = require('./coordinator');
-const { db, saveTransaction, prepareTransaction, commitTransaction, rollbackTransaction } = require('./participant');
+const { transact, getTransactionState } = require('./coordinator');
+const { db, saveTransaction, prepareTransaction, commitTransaction, abortTransaction, setCoordinator } = require('./participant');
 
 const express = require('express');
 const app = express();
@@ -30,24 +30,37 @@ app.post('/coordinator/transact', (req, res) => {
 	transact(tid, transactionData, res);
 });
 
+app.get('/coordinator/tstate/:tid', (req, res) => {
+	res.send(getTransactionState(req.params.tid));
+});
+
 app.post('/save/:tid', (req, res) => {
-	setTimeout(() => res.send("DONE"), randInt(1000));
+	setCoordinator(req.params.tid, req.headers.origin);
 	saveTransaction(req.params.tid, req.body);
+	res.send("DONE");
 });
 
 app.get('/prepare/:tid', (req, res) => {
-	setTimeout(() => res.send("READY"), randInt(2500));
-	prepareTransaction(req.params.tid);
+	if (prepareTransaction(req.params.tid)) {
+		res.send("READY");
+	}
+	else {
+		res.sendStatus(status.INTERNAL_SERVER_ERROR);
+	}
 });
 
 app.post('/commit/:tid', (req, res) => {
-	setTimeout(() => res.send("ACK"), randInt(1000));
-	commitTransaction(req.params.tid);
+	if (commitTransaction(req.params.tid)) {
+		res.send("ACK");
+	}
+	else {
+		res.sendStatus(status.INTERNAL_SERVER_ERROR);
+	}
 });
 
-app.post('/rollback/:tid', (req, res) => {
+app.post('/abort/:tid', (req, res) => {
 	setTimeout(() => res.send("ACK"), randInt(1000));
-	rollbackTransaction(req.params.tid);
+	abortTransaction(req.params.tid);
 });
 
 app.get('/db/:variable?', (req, res) => {

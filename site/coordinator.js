@@ -1,5 +1,5 @@
 const logger = require('./logger');
-const { getUrlOfPeer } = require('./arch');
+const { getUrlOfPeer, getMyUrl } = require('./arch');
 const fetch = require('node-fetch');
 
 const FAILURE = 0, SUCCESS = 1, TIMEOUT = -1;
@@ -9,17 +9,21 @@ const client_res = {};
 const done_remaining = {};
 const ready_remaining = {};
 const commit_ack_remaining = {};
-const rollback_ack_remaining = {};
+const abort_ack_remaining = {};
+const state = {};
 
 function transact(tid, transactionData, res) {
 	client_res[tid] = res;
+	state[tid] = 'processing';
+
 	done_remaining[tid] = sites.length;
 	sites.forEach(site => {
 		logger.info(`Sending transaction to ${site}`);
 		timeout(fetch(`${getUrlOfPeer(site)}/save/${tid}`, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'application/json'
+				'Content-Type': 'application/json',
+				'Origin': getMyUrl()
 			},
 			body: transactionData
 		}), TIMOUT_TIME)
@@ -71,11 +75,13 @@ function handlePrepareResult(result, tid, site) {
 		ready_remaining[tid] = 0;
 		const msg = `${site} NOT READY to commit ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
 		logger.error(msg);
-		process.nextTick(() => askToRollback(tid));
+		process.nextTick(() => askToAbort(tid));
 	}
 }
 
 function askToCommit(tid) {
+	state[tid] = 'commit';
+
 	commit_ack_remaining[tid] = sites.length;
 	sites.forEach(site => {
 		logger.info(`Asking ${site} to commit ${tid}`);
@@ -104,30 +110,32 @@ function handleCommitResult(result, tid, site) {
 	}
 }
 
-function askToRollback(tid) {
-	rollback_ack_remaining[tid] = sites.length;
+function askToAbort(tid) {
+	state[tid] = 'abort';
+
+	abort_ack_remaining[tid] = sites.length;
 	sites.forEach(site => {
-		logger.info(`Asking ${site} to rollback ${tid}`);
-		timeout(fetch(`${getUrlOfPeer(site)}/rollback/${tid}`, { method: 'POST' }), TIMOUT_TIME)
-			.then(({ ok }) => handleRollbackResult(resultify(ok), tid, site))
-			.catch(({ message }) => handleRollbackResult(resultify(message), tid, site));
+		logger.info(`Asking ${site} to abort ${tid}`);
+		timeout(fetch(`${getUrlOfPeer(site)}/abort/${tid}`, { method: 'POST' }), TIMOUT_TIME)
+			.then(({ ok }) => handleAbortResult(resultify(ok), tid, site))
+			.catch(({ message }) => handleAbortResult(resultify(message), tid, site));
 	});
 }
 
-function handleRollbackResult(result, tid, site) {
-	if (!rollback_ack_remaining[tid]) return;
+function handleAbortResult(result, tid, site) {
+	if (!abort_ack_remaining[tid]) return;
 
 	if (result === SUCCESS) {
-		rollback_ack_remaining[tid]--;
-		logger.info(`${site} ROLLEDBACK ${tid}`);
-		if (rollback_ack_remaining[tid] === 0) {
-			logger.info(`All sites ROLLEDBACK ${tid}`);
+		abort_ack_remaining[tid]--;
+		logger.info(`${site} ABORTED ${tid}`);
+		if (abort_ack_remaining[tid] === 0) {
+			logger.info(`All sites ABORTED ${tid}`);
 			handleTransactionComplete(tid, FAILURE, 'atleast one site NOT READY');
 		}
 	}
 	else {
-		rollback_ack_remaining[tid] = 0;
-		const msg = `${site} failed to ROLLBACK ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
+		abort_ack_remaining[tid] = 0;
+		const msg = `${site} failed to ABORT ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
 		logger.error(msg);
 		handleTransactionComplete(tid, result, msg);
 	}
@@ -141,6 +149,10 @@ function handleTransactionComplete(tid, result, reason) {
 	else {
 		res.end(`FAILED: ${reason}`);
 	}
+}
+
+function getTransactionState(tid) {
+	return state[tid];
 }
 
 function timeout(promise, ms) {
@@ -169,4 +181,4 @@ function resultify(result) {
 	}
 }
 
-module.exports = { transact };
+module.exports = { transact, getTransactionState };
