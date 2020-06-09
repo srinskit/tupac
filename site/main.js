@@ -20,6 +20,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 app.post('/coordinator/transact', (req, res) => {
+	console.log("\n");
 	const transaction = req.body;
 	const transactionData = JSON.stringify(transaction);
 	const tid = uuidv1();
@@ -35,12 +36,14 @@ app.get('/coordinator/tstate/:tid', (req, res) => {
 });
 
 app.post('/save/:tid', (req, res) => {
+	console.log("\n");
 	setCoordinator(req.params.tid, req.headers.origin);
 	saveTransaction(req.params.tid, req.body);
 	res.send("DONE");
 });
 
 app.get('/prepare/:tid', (req, res) => {
+	logger.info(`Received <PREPARE ${req.params.tid}>`);
 	if (prepareTransaction(req.params.tid)) {
 		res.send("READY");
 	}
@@ -50,6 +53,7 @@ app.get('/prepare/:tid', (req, res) => {
 });
 
 app.post('/commit/:tid', (req, res) => {
+	logger.info(`Received <COMMIT ${req.params.tid}>`);
 	if (commitTransaction(req.params.tid)) {
 		res.send("ACK");
 	}
@@ -59,8 +63,9 @@ app.post('/commit/:tid', (req, res) => {
 });
 
 app.post('/abort/:tid', (req, res) => {
-	setTimeout(() => res.send("ACK"), randInt(1000));
+	logger.info(`Received <ABORT ${req.params.tid}>`);
 	abortTransaction(req.params.tid);
+	res.send("ACK");
 });
 
 app.get('/db/:variable?', (req, res) => {

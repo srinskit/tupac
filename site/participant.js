@@ -9,19 +9,18 @@ const db = {};
 const transactions = {};
 const pendingCommits = {};
 const coordinator = {};
+const logs = [];
 
 function saveTransaction(tid, transaction) {
 	transactions[tid] = transaction;
-	logger.info("Transaction received");
-	logger.info("Transaction logs: ");
-	console.log(transactions);
-	console.log();
+	logger.info(`Received transaction ${tid}`);
 }
 
 function prepareTransaction(tid) {
-	logger.info(`Received <PREPARE T> ${tid}`);
+	logs.push({ type: 'prepare', tid });
+
 	if (!canExecute(transactions[tid], 'prepare')) {
-		logger.error(`Failed to prepare ${tid}`);
+		logger.warn(`Failed to prepare ${tid}`);
 		process.nextTick(() => recover(tid, 'prepare'));
 		return FAILURE;
 	}
@@ -30,22 +29,22 @@ function prepareTransaction(tid) {
 	math.evaluate(instructions, state)
 	pendingCommits[tid] = state;
 
-	logger.info("Pending commits:");
-	console.log(pendingCommits);
-	console.log();
+	logger.info(`Prepared transaction ${tid}`);
 	return SUCCESS;
 }
 
 function commitTransaction(tid) {
-	logger.info(`Received <COMMIT T> ${tid}`);
+	logs.push({ type: 'commit', tid });
+
 	if (!canExecute(transactions[tid], 'commit')) {
-		logger.error(`Failed to commit ${tid}`);
+		logger.warn(`Failed to commit ${tid}`);
 		process.nextTick(() => recover(tid, 'commit'));
 		return FAILURE;
 	}
 
-	logger.info("DB before commit: " + JSON.stringify(db));
 	logger.info(`Committing transaction ${tid}`);
+	logger.info("DB before commit: " + JSON.stringify(db));
+
 	commit = pendingCommits[tid];
 	for (let variable in commit) {
 		db[variable] = commit[variable];
@@ -53,34 +52,43 @@ function commitTransaction(tid) {
 	delete transactions[tid];
 	delete pendingCommits[tid];
 
-	logger.info("DB after commit: " + JSON.stringify(db));
+	logger.info("DB after  commit: " + JSON.stringify(db));
 	return SUCCESS;
 }
 
 function abortTransaction(tid) {
-	logger.info(`Received <ABORT T> ${tid}`);
+	logs.push({ type: 'abort', tid });
 
 	delete transactions[tid];
 	delete pendingCommits[tid];
 
-	logger.info("Transaction logs:");
-	console.log(transactions);
-	console.log();
-	logger.info("Pending commits:");
-	console.log(pendingCommits);
-	console.log();
+	logger.info(`Aborted transaction ${tid}`);
+	logger.info("DB after abort: " + JSON.stringify(db));
 }
 
 function clone(simpleObj) {
 	return JSON.parse(JSON.stringify(simpleObj));
 }
 
-async function recover(tid, fromPhase) {
+async function recover(tid) {
+	logger.info(`Attempting to recover ${tid}`);
+
 	delete transactions[tid].failAt;
 
-	if (fromPhase === 'commit') {
+	let fromPhase = null;
+	const _tid = tid;
+	const filteredLogs = logs.filter(({ tid }) => tid === _tid);
+	if (filteredLogs.length) {
+		fromPhase = filteredLogs[filteredLogs.length - 1].type;
+	}
+
+	if (fromPhase === 'prepare') {
+		logger.info('Recovery not needed, abort will be issued');
+	}
+	else if (fromPhase === 'commit') {
 		const stateInCoordinator = await getTransactionState(tid);
 		if (stateInCoordinator === 'commit') {
+			logger.info('Coordinator says commit was issued, recovering by commiting');
 			commitTransaction(tid);
 		}
 	}
