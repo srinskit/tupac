@@ -1,24 +1,26 @@
 const logger = require('./logger');
-const { getUrlOfPeer, getMyUrl } = require('./arch');
+const { getUrlOfPeer, getMyUrl, getSiteName } = require('./arch');
 const fetch = require('node-fetch');
+const { saveTransaction, prepareTransaction, commitTransaction, abortTransaction } = require('./participant');
 
 const FAILURE = 0, SUCCESS = 1, TIMEOUT = -1;
 const TIMOUT_TIME = 5000;
-const sites = ['site1', 'site2', 'site3', 'site4'];
+const sites = ['site1', 'site2', 'site3', 'site4'].filter(s => s !== getSiteName());
 const client_res = {};
 const done_remaining = {};
 const ready_remaining = {};
 const commit_ack_remaining = {};
 const abort_ack_remaining = {};
-const state = {};
+const logs = [];
+const transactions = {};
 
 function transact(tid, transactionData, res) {
 	client_res[tid] = res;
-	state[tid] = 'processing';
+	transactions[tid] = JSON.parse(transactionData);
 
 	done_remaining[tid] = sites.length;
 	sites.forEach(site => {
-		logger.info(`Sending transaction to ${site}`);
+		logger.info(`[COORD] Sending transaction to ${site}`);
 		timeout(fetch(`${getUrlOfPeer(site)}/save/${tid}`, {
 			method: 'POST',
 			headers: {
@@ -37,23 +39,26 @@ function handleTransactResult(result, tid, site) {
 
 	if (result === SUCCESS) {
 		done_remaining[tid]--;
-		logger.info(`${site} DONE processing ${tid}`);
+		logger.info(`[COORD]: ${site} DONE processing ${tid}`);
 		if (done_remaining[tid] === 0) {
-			logger.info(`All sites DONE processing ${tid}`);
+			saveTransaction(tid, transactions[tid]);
+			logger.info(`[COORD]: All sites DONE processing ${tid}`);
 			process.nextTick(() => askToPrepare(tid))
 		}
 	} else {
 		done_remaining[tid] = 0;
-		const msg = `${site} failed to process ${tid}${result === TIMEOUT ? ', timed-out' : ''}`
+		const msg = `[COORD]: ${site} failed to process ${tid}${result === TIMEOUT ? ', timed-out' : ''}`
 		logger.error(msg);
 		handleTransactionComplete(tid, result, msg);
 	}
 }
 
 function askToPrepare(tid) {
+	logs.push({ type: 'prepare', tid });
+
 	ready_remaining[tid] = sites.length;
 	sites.forEach(site => {
-		logger.info(`Asking ${site} if READY to commit ${tid}`);
+		logger.info(`[COORD]: Asking ${site} if READY to commit ${tid}`);
 		timeout(fetch(`${getUrlOfPeer(site)}/prepare/${tid}`), TIMOUT_TIME)
 			.then(({ ok }) => handlePrepareResult(resultify(ok), tid, site))
 			.catch(({ message }) => handlePrepareResult(resultify(message), tid, site));
@@ -65,26 +70,32 @@ function handlePrepareResult(result, tid, site) {
 
 	if (result === SUCCESS) {
 		ready_remaining[tid]--;
-		logger.info(`${site} READY to commit ${tid}`);
+		logger.info(`[COORD]: ${site} READY to commit ${tid}`);
 		if (ready_remaining[tid] === 0) {
-			logger.info(`All sites READY to commit ${tid}`);
-			process.nextTick(() => askToCommit(tid));
+			if (canExecute(transactions[tid], 'after-ready')) {
+				prepareTransaction(tid);
+				logger.info(`[COORD]: All sites READY to commit ${tid}`);
+				process.nextTick(() => askToCommit(tid));
+			} else {
+				logger.error(`[COORD]: Failed. Recovering. ${tid}`);
+				process.nextTick(() => recover(tid));
+			}
 		}
 	}
 	else {
 		ready_remaining[tid] = 0;
-		const msg = `${site} NOT READY to commit ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
+		const msg = `[COORD]: ${site} NOT READY to commit ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
 		logger.error(msg);
 		process.nextTick(() => askToAbort(tid));
 	}
 }
 
 function askToCommit(tid) {
-	state[tid] = 'commit';
+	logs.push({ type: 'commit', tid });
 
 	commit_ack_remaining[tid] = sites.length;
 	sites.forEach(site => {
-		logger.info(`Asking ${site} to commit ${tid}`);
+		logger.info(`[COORD]: Asking ${site} to commit ${tid}`);
 		timeout(fetch(`${getUrlOfPeer(site)}/commit/${tid}`, { method: 'POST' }), TIMOUT_TIME)
 			.then(({ ok }) => handleCommitResult(resultify(ok), tid, site))
 			.catch(({ message }) => handleCommitResult(resultify(message), tid, site));
@@ -96,26 +107,33 @@ function handleCommitResult(result, tid, site) {
 
 	if (result === SUCCESS) {
 		commit_ack_remaining[tid]--;
-		logger.info(`${site} COMMITED ${tid}`);
+		logger.info(`[COORD]: ${site} COMMITED ${tid}`);
 		if (commit_ack_remaining[tid] === 0) {
-			logger.info(`All sites COMMITED ${tid}`);
-			process.nextTick(() => handleTransactionComplete(tid, SUCCESS))
+			if (canExecute(transactions[tid], 'after-commit')) {
+				commitTransaction(tid);
+				logger.info(`[COORD]: All sites COMMITED ${tid}`);
+				process.nextTick(() => handleTransactionComplete(tid, SUCCESS));
+			}
+			else {
+				logger.error(`[COORD]: Failed. Recovering. ${tid}`);
+				process.nextTick(() => recover(tid));
+			}
 		}
 	}
 	else {
 		commit_ack_remaining[tid] = 0;
-		const msg = `${site} failed to COMMIT ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
+		const msg = `[COORD]: ${site} failed to COMMIT ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
 		logger.error(msg);
 		handleTransactionComplete(tid, result, msg);
 	}
 }
 
 function askToAbort(tid) {
-	state[tid] = 'abort';
+	logs.push({ type: 'abort', tid });
 
 	abort_ack_remaining[tid] = sites.length;
 	sites.forEach(site => {
-		logger.info(`Asking ${site} to abort ${tid}`);
+		logger.info(`[COORD]: Asking ${site} to abort ${tid}`);
 		timeout(fetch(`${getUrlOfPeer(site)}/abort/${tid}`, { method: 'POST' }), TIMOUT_TIME)
 			.then(({ ok }) => handleAbortResult(resultify(ok), tid, site))
 			.catch(({ message }) => handleAbortResult(resultify(message), tid, site));
@@ -127,15 +145,16 @@ function handleAbortResult(result, tid, site) {
 
 	if (result === SUCCESS) {
 		abort_ack_remaining[tid]--;
-		logger.info(`${site} ABORTED ${tid}`);
+		logger.info(`[COORD]: ${site} ABORTED ${tid}`);
 		if (abort_ack_remaining[tid] === 0) {
-			logger.info(`All sites ABORTED ${tid}`);
+			abortTransaction(tid);
+			logger.info(`[COORD]: All sites ABORTED ${tid}`);
 			handleTransactionComplete(tid, FAILURE, 'atleast one site NOT READY');
 		}
 	}
 	else {
 		abort_ack_remaining[tid] = 0;
-		const msg = `${site} failed to ABORT ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
+		const msg = `[COORD]: ${site} failed to ABORT ${tid}${result === TIMEOUT ? ', timed-out' : ''}`;
 		logger.error(msg);
 		handleTransactionComplete(tid, result, msg);
 	}
@@ -151,8 +170,12 @@ function handleTransactionComplete(tid, result, reason) {
 	}
 }
 
-function getTransactionState(tid) {
-	return state[tid];
+function getTransactionState(_tid) {
+	const filteredLogs = logs.filter(({ tid }) => tid === _tid);
+	if (filteredLogs.length) {
+		return filteredLogs[filteredLogs.length - 1].type;
+	}
+	return null;
 }
 
 function timeout(promise, ms) {
@@ -178,6 +201,28 @@ function resultify(result) {
 		case true: return SUCCESS;
 		case 'timeout': return TIMEOUT;
 		default: return FAILURE;
+	}
+}
+
+function canExecute({ failAt }, phase) {
+	if (failAt) {
+		const coordinatorFailure = failAt['coordinator'];
+		return coordinatorFailure && coordinatorFailure.during === phase ? FAILURE : SUCCESS;
+	}
+	return SUCCESS;
+}
+
+function recover(tid) {
+	delete transactions[tid].failAt;
+
+	const previousStage = getTransactionState(tid);
+	if (previousStage === 'prepare') {
+		prepareTransaction(tid);
+		process.nextTick(() => askToCommit(tid));
+	}
+	else if (previousStage === 'commit') {
+		commitTransaction(tid);
+		process.nextTick(() => handleTransactionComplete(tid, SUCCESS));
 	}
 }
 

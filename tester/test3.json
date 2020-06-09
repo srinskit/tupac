@@ -6,8 +6,8 @@
 		"a = a + 300"
 	],
 	"failAt": {
-		"site4": {
-			"during": "prepare"
+		"coordinator": {
+			"during": "after-commit"
 		}
 	}
 }

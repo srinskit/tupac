@@ -4,10 +4,5 @@
 		"c = c - 100",
 		"d = d - 100",
 		"a = a + 300"
-	],
-	"failAt": {
-		"site4": {
-			"during": "prepare"
-		}
-	}
+	]
 }

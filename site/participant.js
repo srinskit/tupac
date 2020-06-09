@@ -21,6 +21,7 @@ function saveTransaction(tid, transaction) {
 function prepareTransaction(tid) {
 	logger.info(`Received <PREPARE T> ${tid}`);
 	if (!canExecute(transactions[tid], 'prepare')) {
+		logger.error(`Failed to prepare ${tid}`);
 		process.nextTick(() => recover(tid, 'prepare'));
 		return FAILURE;
 	}
@@ -38,6 +39,7 @@ function prepareTransaction(tid) {
 function commitTransaction(tid) {
 	logger.info(`Received <COMMIT T> ${tid}`);
 	if (!canExecute(transactions[tid], 'commit')) {
+		logger.error(`Failed to commit ${tid}`);
 		process.nextTick(() => recover(tid, 'commit'));
 		return FAILURE;
 	}
@@ -74,7 +76,14 @@ function clone(simpleObj) {
 }
 
 async function recover(tid, fromPhase) {
-	const state = await getTransactionState(tid);
+	delete transactions[tid].failAt;
+
+	if (fromPhase === 'commit') {
+		const stateInCoordinator = await getTransactionState(tid);
+		if (stateInCoordinator === 'commit') {
+			commitTransaction(tid);
+		}
+	}
 }
 
 async function getTransactionState(tid) {
@@ -96,4 +105,5 @@ function canExecute({ failAt }, phase) {
 function setCoordinator(tid, url) {
 	coordinator[tid] = url;
 }
+
 module.exports = { db, saveTransaction, prepareTransaction, commitTransaction, abortTransaction, setCoordinator };

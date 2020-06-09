@@ -7,7 +7,7 @@
 	],
 	"failAt": {
 		"site4": {
-			"during": "prepare"
+			"during": "commit"
 		}
 	}
 }

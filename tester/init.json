@@ -1,11 +1,8 @@
 {
 	"instructions": [
-		"a = 0",
-		"b = 0"
-	],
-	"failAt": {
-		"site4": {
-			"during": "prepare"
-		}
-	}
+		"a = 100",
+		"b = 200",
+		"c = 200",
+		"d = 200"
+	]
 }
