@@ -7,14 +7,19 @@ declare -A addresses=(
 	["site4"]="http://localhost:6000"
 )
 
+print_db(){
+	echo -e "\nDB:"
+	echo -ne "a = " && curl -w "\n" "${addresses["site1"]}/db/a"
+	echo -ne "b = " && curl -w "\n" "${addresses["site2"]}/db/b"
+	echo -ne "c = " && curl -w "\n" "${addresses["site3"]}/db/c"
+	echo -ne "d = " && curl -w "\n" "${addresses["site4"]}/db/d"
+}
+
 site="site1"
 
-echo -n "DB: "
-curl -w "\n" "${addresses[$site]}/db"
-echo
+print_db
 
+echo -e "\nPerforming transaction"
 curl -w "\n" -H "Content-Type: application/json" --data "@$1" "${addresses[$site]}/coordinator/transact"
 
-echo
-echo -n "DB: "
-curl -w "\n" "${addresses[$site]}/db"
+print_db
