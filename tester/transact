@@ -7,7 +7,8 @@ declare -A addresses=(
 	["site4"]="http://localhost:6000"
 )
 
-print_db(){
+# Query and print values from different sites
+print_db() {
 	echo -e "\nDB:"
 	echo -ne "a = " && curl -w "\n" "${addresses["site1"]}/db/a"
 	echo -ne "b = " && curl -w "\n" "${addresses["site2"]}/db/b"
@@ -20,6 +21,9 @@ site="site1"
 print_db
 
 echo -e "\nPerforming transaction"
-curl -w "\n" -H "Content-Type: application/json" --data "@$1" "${addresses[$site]}/coordinator/transact"
+
+# Submit transaction to coordinator and print response
+curl -w "\n" -H "Content-Type: application/json" --data "@$1" \
+	"${addresses[$site]}/coordinator/transact"
 
 print_db

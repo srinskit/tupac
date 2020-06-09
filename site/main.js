@@ -28,15 +28,19 @@ app.post('/coordinator/transact', (req, res) => {
 	res.write(`Transaction ID: ${tid}\n`);
 	res.write(`Transaction: ${transactionData}\n`);
 
+	// Kickstart coordinator process
 	transact(tid, transactionData, res);
 });
 
 app.get('/coordinator/tstate/:tid', (req, res) => {
+	// Handle a participant's request for coordinator status
 	res.send(getTransactionState(req.params.tid));
 });
 
 app.post('/save/:tid', (req, res) => {
 	console.log("\n");
+	// Automatically set coordinator for a 
+	// received transaction using HTTP headers
 	setCoordinator(req.params.tid, req.headers.origin);
 	saveTransaction(req.params.tid, req.body);
 	res.send("DONE");
@@ -44,6 +48,7 @@ app.post('/save/:tid', (req, res) => {
 
 app.get('/prepare/:tid', (req, res) => {
 	logger.info(`Received <PREPARE ${req.params.tid}>`);
+	// Send READY if <PREPARE T> successful
 	if (prepareTransaction(req.params.tid)) {
 		res.send("READY");
 	}
@@ -54,6 +59,7 @@ app.get('/prepare/:tid', (req, res) => {
 
 app.post('/commit/:tid', (req, res) => {
 	logger.info(`Received <COMMIT ${req.params.tid}>`);
+	// Send COMMIT ACK if <PREPARE T> successful
 	if (commitTransaction(req.params.tid)) {
 		res.send("ACK");
 	}
@@ -64,6 +70,7 @@ app.post('/commit/:tid', (req, res) => {
 
 app.post('/abort/:tid', (req, res) => {
 	logger.info(`Received <ABORT ${req.params.tid}>`);
+	// Send ABORT ACK
 	abortTransaction(req.params.tid);
 	res.send("ACK");
 });
